@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+import boto3
+import os
+import sys
+import time
+import zipfile
+import shutil
+from colorama import Fore, init
+
+# Initialize colorama
+init(autoreset=True)
+
+s3_client = boto3.client('s3')
+
+BUCKET_NAME = 'YOUR_S3_BUCKET_NAME'
+
+# Your IAM credentials should be configured using the awscli tool, This utility uses the S3 bucket for file transfer across devices.
+
+def list_files():
+    try:
+        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME)
+        files = response.get('Contents', [])
+        if not files:
+            print(Fore.WHITE + "No content available.\n------------------------------------------------------------")
+            return []
+
+        print(Fore.WHITE + "\nAvailable contents:")
+        for i, file in enumerate(files):
+            file_name = file['Key']
+            if file_name.endswith('.zipdir'):
+                file_name = file_name[:-7] 
+                file_info = f"{file_name} (Directory, Size: {file['Size']} bytes)"
+            else:
+                file_info = f"{file_name} (Size: {file['Size']} bytes)"  
+            
+            print(Fore.WHITE + f"{i + 1}. {file_info}")
+        
+        return files
+    except Exception as e:
+        print(Fore.RED + f"Error listing content: {e}\n------------------------------------------------------------")
+        return []
+
+def upload_file_or_directory(path):
+    try:
+        if os.path.isdir(path):
+            zip_file_path = shutil.make_archive(path, 'zip', path)
+            zip_file_name = os.path.basename(zip_file_path) + 'dir'
+            print(Fore.WHITE + f"Uploading directory ({path}) . . .")
+            s3_client.upload_file(zip_file_path, BUCKET_NAME, zip_file_name)
+            os.remove(zip_file_path)
+            print(Fore.GREEN + f"Directory {path} uploaded successfully.\n------------------------------------------------------------")
+        elif os.path.isfile(path):
+            file_name = os.path.basename(path)
+            print(Fore.WHITE + f"Uploading file {file_name} . . .")
+            s3_client.upload_file(path, BUCKET_NAME, file_name)
+            print(Fore.GREEN + f"File {file_name} uploaded successfully.\n------------------------------------------------------------")
+        else:
+            print(Fore.RED + f"{path} is neither a file nor a valid directory.\n------------------------------------------------------------")
+    except Exception as e:
+        print(Fore.RED + f"Error uploading: {e}\n------------------------------------------------------------")
+
+def download_and_extract(file_index):
+    try:
+        files = list_files()
+        if not files:
+            return
+
+        file_to_download = files[file_index]
+        file_name = file_to_download['Key']
+        
+        print(Fore.WHITE + f"Downloading {file_name.replace('.zipdir', '').strip()}...")
+        s3_client.download_file(BUCKET_NAME, file_name, file_name)
+
+
+        if file_name.endswith('.zipdir'):
+            dir_name = file_name[:-7]  
+            with zipfile.ZipFile(file_name, 'r') as zip_ref:
+                zip_ref.extractall(dir_name)
+            os.remove(file_name)
+            print(Fore.GREEN + f"Downloaded {dir_name} successfully!\n------------------------------------------------------------")
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_name)
+        else:
+            print(Fore.GREEN + f"Downloaded {file_name} successfully!\n------------------------------------------------------------")
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_name)
+
+    except IndexError:
+        print(Fore.RED + "Invalid file index.\n------------------------------------------------------------")
+    except Exception as e:
+        print(Fore.RED + f"Error downloading or extracting file: {e}\n------------------------------------------------------------")
+
+def main():
+    while True:
+        print(Fore.WHITE + "\nWHISP v1.0\n")
+        print(Fore.WHITE + "1. Upload")
+        print(Fore.WHITE + "2. List contents")
+        print(Fore.WHITE + "3. Download")
+        print(Fore.WHITE + "4. Exit\n")
+
+        choice = input(Fore.YELLOW + "Enter your choice: ").strip()
+
+        if choice == '1':
+            path = input(Fore.YELLOW + "Path to upload: ").strip()
+            upload_file_or_directory(path)
+        elif choice == '2':
+            list_files()
+        elif choice == '3':
+            files = list_files()
+            if files:
+                try:
+                    index = int(input(Fore.YELLOW + "Enter the index: ").strip()) - 1
+                    download_and_extract(index)
+                except ValueError:
+                    print(Fore.RED + "Please enter a valid number.\n------------------------------------------------------------")
+        elif choice == '4':
+            print(Fore.WHITE + "Exiting...\n")
+            sys.exit(0)
+        else:
+            print(Fore.RED + "Invalid choice. Please try again.\n------------------------------------------------------------")
+        
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
